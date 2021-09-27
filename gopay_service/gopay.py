@@ -31,19 +31,12 @@ class Gopay:
     goid: numeric
     api_root: str = "https://gw.sandbox.gopay.com"
     scope: str = field(repr=False, default="payment-all")
+    last_response: GopayResponse = field(repr=False, init=False)
     _session: Session = field(repr=False, default_factory=Session)
     _token: str = field(repr=False, init=False)
     _token_created: datetime = field(repr=False, init=False)
-    _last_response: GopayResponse = field(repr=False, init=False)
     _enabled_payment_instruments: Dict = field(repr=False, init=False)
     _enabled_swifts: Dict = field(repr=False, init=False)
-
-    @property
-    def last_response(self) -> GopayResponse:
-        """
-        Returns GopayResponse of the last API operation
-        """
-        return self._last_response
 
     @property
     def payment_instruments(self) -> Dict:
@@ -92,7 +85,7 @@ class Gopay:
 
     def _handle_response(self, response: Dict) -> GopayResponse:
         gopay_response = GopayResponse(**response)
-        self._last_response = gopay_response
+        self.last_response = gopay_response
         return gopay_response
 
     def _get_token(self) -> None:
