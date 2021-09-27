@@ -35,24 +35,33 @@ class Gopay:
     _token: str = field(repr=False, init=False)
     _token_created: datetime = field(repr=False, init=False)
     _last_response: GopayResponse = field(repr=False, init=False)
-    _payment_instruments: Dict = field(repr=False, init=False)
+    _enabled_payment_instruments: Dict = field(repr=False, init=False)
     _enabled_swifts: Dict = field(repr=False, init=False)
 
     @property
     def last_response(self) -> GopayResponse:
+        """
+        Returns GopayResponse of the last API operation
+        """
         return self._last_response
 
     @property
-    def payment_instruments(self) -> Dict[str, List[str]]:
-        return self._payment_instruments
-
-    @property
-    def currencies(self) -> List[str]:
-        return list(self._payment_instruments.keys())
+    def payment_instruments(self) -> Dict:
+        """
+        Returns dict of payment instruments. Keys are available currencies
+        and values are list of dicts, containing the payment instruments
+        name, label and image url
+        """
+        return self._get_entries(self._enabled_payment_instruments)
 
     @property
     def enabled_swifts(self) -> Dict[str, List[str]]:
-        return self._enabled_swifts
+        """
+        Returns dict of swifts. Keys are available currencies
+        and values are list of dicts, containing the swift name, label
+        and image url
+        """
+        return self._get_entries(self._enabled_swifts, swifts=True)
 
     @property
     def _token_expired(self) -> bool:
@@ -100,51 +109,52 @@ class Gopay:
         if response["success"]:
             self._token = response["body"].get("access_token")
 
-    def _parse_currencies(self, payment_instruments: Dict) -> List[str]:
-        currencies = []
-        for key in payment_instruments.keys():
-            currencies.extend(payment_instruments[key]["currencies"])
-        return sorted(list(set(currencies)))
-
-    def _parse_instruments(self, payment_instruments: Dict) -> Dict[str, List[str]]:
-        currencies = self._parse_currencies(payment_instruments)
-        payment_methods = {}
-        for currency in currencies:
-            payment_methods[currency] = [
-                key
-                for key in payment_instruments.keys()
-                if currency in payment_instruments[key]["currencies"]
-            ]
-        return payment_methods
-
-    def _parse_swifts(
-        self, payment_instruments: Dict, currencies: List[str]
-    ) -> Dict[str, List[str]]:
-        if "BANK_ACCOUNT" not in payment_instruments.keys():
-            return {}
-        swifts = {
-            key: list(value["currencies"].keys())[0]
-            for key, value in payment_instruments["BANK_ACCOUNT"][
-                "enabledSwifts"
-            ].items()
+    def _parse_entry(self, key: str, value: Dict) -> Dict:
+        return {
+            "name": key,
+            "label": value.get("label").get("cs"),
+            "image": value.get("image").get("large"),
+            "currencies": value.get("currencies"),
         }
-        enabled_swifts = {}
-        for currency in ["CZK", "EUR", "PLN"]:
-            if not currency in currencies:
-                continue
-            enabled_swifts[currency] = [
-                key for key, value in swifts.items() if value == currency
+
+    def _parse_entries(self, gopay_entries: Dict) -> List[Dict]:
+        return [self._parse_entry(key, value) for key, value in gopay_entries.items()]
+
+    def _filter_out_currency(self, instrument: Dict) -> Dict:
+        return {key: value for key, value in instrument.items() if key != "currencies"}
+
+    def _get_entries(self, parsed_entries: List, swifts: bool = False) -> Dict:
+        currencies = []
+        if not swifts:
+            for instrument in parsed_entries:
+                currencies.extend(instrument["currencies"])
+        else:
+            for instrument in parsed_entries:
+                currencies.extend(instrument["currencies"].keys())
+
+        currencies = sorted(list(set(currencies)))
+
+        final_entries = {}
+        for currency in currencies:
+            final_entries[currency] = [
+                self._filter_out_currency(instrument)
+                for instrument in parsed_entries
+                if currency in instrument["currencies"]
             ]
-        return enabled_swifts
+
+        return final_entries
 
     def _get_payment_methods(self) -> None:
         response = self.fetch_payment_methods()
         if response.success:
-            payment_instruments = response.body["enabledPaymentInstruments"]
-            self._payment_instruments = self._parse_instruments(payment_instruments)
-            self._enabled_swifts = self._parse_swifts(
-                payment_instruments, self.currencies
+            enabled_payment_instruments = response.body.get("enabledPaymentInstruments")
+            enabled_swifts = enabled_payment_instruments.get("BANK_ACCOUNT").get(
+                "enabledSwifts"
             )
+            self._enabled_payment_instruments = self._parse_entries(
+                enabled_payment_instruments
+            )
+            self._enabled_swifts = self._parse_entries(enabled_swifts)
 
     def __post_init__(self) -> None:
         self._get_token()
